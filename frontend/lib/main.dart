@@ -7,6 +7,7 @@ import 'package:platform_ocr/platform_ocr.dart';
 import 'package:exif/exif.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
+import 'dart:convert';
 
 void main() {
   runApp(const MyApp());
@@ -295,6 +296,26 @@ class _ImageUploadScreenState extends State<ImageUploadScreen> {
   double? _latitude;
   double? _longitude;
 
+  String get _analysisResultJson {
+    final Map<String, dynamic> data = {
+      'metadata': {
+        'dateTime': _photoDate,
+        'gps': _latitude != null && _longitude != null
+            ? {
+                'latitude': double.parse(_latitude!.toStringAsFixed(6)),
+                'longitude': double.parse(_longitude!.toStringAsFixed(6)),
+              }
+            : null,
+      },
+      'ocr': {
+        'engine': Platform.isWindows ? 'Windows Native OCR' : 'Google ML Kit',
+        'confidence': _confidence,
+        'text': _recognizedText,
+      }
+    };
+    return const JsonEncoder.withIndent('  ').convert(data);
+  }
+
   double _ratioToDouble(dynamic val) {
     if (val is double) return val;
     if (val is int) return val.toDouble();
@@ -576,15 +597,25 @@ class _ImageUploadScreenState extends State<ImageUploadScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text('분석 결과 정보', style: theme.textTheme.titleLarge),
+                    Text('분석 결과 정보 (JSON)', style: theme.textTheme.titleLarge),
                     const Divider(height: 24),
-                    Text('촬영 날짜: $_photoDate', style: theme.textTheme.bodyLarge),
-                    const SizedBox(height: 8),
-                    Text('위치 정보: ${_latitude != null && _longitude != null ? "${_latitude!.toStringAsFixed(6)}, ${_longitude!.toStringAsFixed(6)}" : "위치 정보 없음"}', style: theme.textTheme.bodyLarge),
-                    const SizedBox(height: 8),
-                    Text('인식된 텍스트: $_recognizedText', style: theme.textTheme.bodyLarge),
-                    const SizedBox(height: 8),
-                    Text('신뢰도: $_confidence', style: theme.textTheme.bodyLarge?.copyWith(color: theme.colorScheme.secondary, fontWeight: FontWeight.bold)),
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFF8F9FA),
+                        borderRadius: BorderRadius.circular(6),
+                        border: Border.all(color: const Color(0xFFE9ECEF)),
+                      ),
+                      child: SelectableText(
+                        _analysisResultJson,
+                        style: const TextStyle(
+                          fontFamily: 'monospace',
+                          fontSize: 13,
+                          color: Color(0xFF212529),
+                        ),
+                      ),
+                    ),
                     _buildMap(),
                   ],
                 ),

@@ -25,3 +25,9 @@ Thumbs.db
 # Certificates
 *.cer
 *.pfx
+
+# Local configuration and credentials
+.env
+*.env
+.env.local
+

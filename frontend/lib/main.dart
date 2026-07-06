@@ -9,7 +9,41 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'dart:convert';
 
-void main() {
+class AppConfig {
+  static bool useBackendServer = false;
+
+  static Future<void> load() async {
+    try {
+      final file = File('DATA/config.json');
+      if (await file.exists()) {
+        final content = await file.readAsString();
+        final Map<String, dynamic> data = json.decode(content);
+        useBackendServer = data['useBackendServer'] ?? false;
+      }
+    } catch (e) {
+      debugPrint("Error loading config: $e");
+    }
+  }
+
+  static Future<void> save() async {
+    try {
+      final dataDir = Directory('DATA');
+      if (!await dataDir.exists()) {
+        await dataDir.create(recursive: true);
+      }
+      final file = File('DATA/config.json');
+      await file.writeAsString(json.encode({
+        'useBackendServer': useBackendServer,
+      }));
+    } catch (e) {
+      debugPrint("Error saving config: $e");
+    }
+  }
+}
+
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await AppConfig.load();
   runApp(const MyApp());
 }
 
@@ -319,6 +353,20 @@ class _ImageListScreenState extends State<ImageListScreen> {
           'ocr': {
             'confidence': item['confidence'] ?? '0.0%',
             'text': item['recognizedText'] ?? '',
+          },
+          'ai': {
+            'isAiAnalyzed': item['isAiAnalyzed'] ?? false,
+            'geminiAnalysis': (() {
+              final val = item['geminiAnalysis'];
+              if (val is String) {
+                try {
+                  if (val.trim().startsWith('{') || val.trim().startsWith('[')) {
+                    return json.decode(val.trim());
+                  }
+                } catch (_) {}
+              }
+              return val ?? '';
+            })(),
           }
         };
         final String formattedJson = const JsonEncoder.withIndent('  ').convert(dataJson);
@@ -423,6 +471,60 @@ class _ImageListScreenState extends State<ImageListScreen> {
     );
   }
 
+  void _showSettingsDialog() {
+    showDialog(
+      context: context,
+      builder: (context) {
+        bool tempUseServer = AppConfig.useBackendServer;
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              title: const Text('설정'),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  SwitchListTile(
+                    title: const Text('백엔드 서버 사용'),
+                    subtitle: const Text('체크 해제 시 100% 로컬 온디바이스 OCR 분석을 실행합니다.'),
+                    value: tempUseServer,
+                    onChanged: (val) {
+                      setDialogState(() {
+                        tempUseServer = val;
+                      });
+                    },
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  child: const Text('취소'),
+                ),
+                ElevatedButton(
+                  onPressed: () async {
+                    AppConfig.useBackendServer = tempUseServer;
+                    await AppConfig.save();
+                    Navigator.of(context).pop();
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text(
+                          AppConfig.useBackendServer
+                              ? '설정이 저장되었습니다 (백엔드 서버 사용).'
+                              : '설정이 저장되었습니다 (로컬 온디바이스 사용).',
+                        ),
+                      ),
+                    );
+                  },
+                  child: const Text('저장'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -436,6 +538,11 @@ class _ImageListScreenState extends State<ImageListScreen> {
             icon: const Icon(Icons.refresh),
             onPressed: _loadSavedAnalyses,
             tooltip: '목록 새로고침',
+          ),
+          IconButton(
+            icon: const Icon(Icons.settings),
+            onPressed: _showSettingsDialog,
+            tooltip: '설정',
           ),
         ],
       ),
@@ -551,12 +658,15 @@ class ImageUploadScreen extends StatefulWidget {
 class _ImageUploadScreenState extends State<ImageUploadScreen> {
   String? _selectedImagePath;
   bool _isAnalyzing = false;
-  String _recognizedText = '';
-  String _confidence = '';
+  String _localOcrText = '';
+  String _localConfidence = '';
+  String _serverOcrText = '';
+  String _serverConfidence = '';
   String _photoDate = '';
   double? _latitude;
   double? _longitude;
   bool _hasAnalyzed = false;
+  String _geminiAnalysis = '';
 
   String get _analysisResultJson {
     final Map<String, dynamic> data = {
@@ -570,9 +680,27 @@ class _ImageUploadScreenState extends State<ImageUploadScreen> {
             : null,
       },
       'ocr': {
-        'engine': Platform.isWindows ? 'Windows Native OCR' : 'Google ML Kit',
-        'confidence': _confidence,
-        'text': _recognizedText,
+        'local': {
+          'engine': Platform.isWindows ? 'Windows Native OCR' : 'Google ML Kit',
+          'confidence': _localConfidence,
+          'text': _localOcrText,
+        },
+        'server': {
+          'engine': 'Backend EasyOCR',
+          'confidence': _serverConfidence,
+          'text': _serverOcrText,
+        }
+      },
+      'ai': {
+        'isAiAnalyzed': _geminiAnalysis.isNotEmpty,
+        'geminiAnalysis': (() {
+          try {
+            if (_geminiAnalysis.trim().startsWith('{') || _geminiAnalysis.trim().startsWith('[')) {
+              return json.decode(_geminiAnalysis.trim());
+            }
+          } catch (_) {}
+          return _geminiAnalysis;
+        })(),
       }
     };
     return const JsonEncoder.withIndent('  ').convert(data);
@@ -660,8 +788,11 @@ class _ImageUploadScreenState extends State<ImageUploadScreen> {
           _photoDate = date ?? '날짜 정보 없음 (총 태그: ${tags.length}개)';
           _latitude = lat;
           _longitude = lon;
-          _recognizedText = '';
-          _confidence = '';
+          _localOcrText = '';
+          _localConfidence = '';
+          _serverOcrText = '';
+          _serverConfidence = '';
+          _geminiAnalysis = '';
           _hasAnalyzed = false;
         });
       }
@@ -675,71 +806,175 @@ class _ImageUploadScreenState extends State<ImageUploadScreen> {
     }
   }
 
-  Future<void> _runOCR() async {
+  Future<void> _runAnalysis({required bool isServer}) async {
     if (_selectedImagePath == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('이미지를 먼저 불러와주세요.')),
+      showDialog(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('알림'),
+          content: const Text('이미지를 먼저 불러와주세요.'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('확인'),
+            ),
+          ],
+        ),
       );
       return;
     }
 
     setState(() {
       _isAnalyzing = true;
-      _recognizedText = '분석 진행 중...';
-      _confidence = '0.0%';
+      _hasAnalyzed = false;
+      if (isServer) {
+        _geminiAnalysis = 'AI 분석 진행 중...';
+        _serverOcrText = 'AI 분석 진행 중...';
+      } else {
+        _localOcrText = '로컬 분석 진행 중...';
+      }
     });
 
-    // 1. Try local ML Kit OCR first (Android/iOS only)
-    try {
-      if (Platform.isAndroid || Platform.isIOS) {
-        final inputImage = InputImage.fromFilePath(_selectedImagePath!);
-        final textRecognizer = TextRecognizer(script: TextRecognitionScript.korean);
-        final RecognizedText recognizedText = await textRecognizer.processImage(inputImage);
+    if (isServer) {
+      try {
+        final dio = dio_pkg.Dio();
         
-        setState(() {
-          _recognizedText = recognizedText.text.isNotEmpty 
-              ? recognizedText.text 
-              : '인식된 텍스트가 없습니다.';
-          _confidence = '99.0% (온디바이스)';
-          _isAnalyzing = false;
-          _hasAnalyzed = true;
+        // 1. Run EasyOCR
+        final formDataOcr = dio_pkg.FormData.fromMap({
+          'file': await dio_pkg.MultipartFile.fromFile(
+            _selectedImagePath!,
+            filename: _selectedImagePath!.split(Platform.pathSeparator).last,
+          ),
         });
-        await textRecognizer.close();
-        return;
-      }
-    } catch (e) {
-      debugPrint("Local ML Kit OCR failed: $e");
-    }
+        final responseOcr = await dio.post(
+          'http://127.0.0.1:8000/api/ocr',
+          data: formDataOcr,
+        );
 
-    // 2. Try Windows native local OCR (using platform_ocr)
-    try {
-      if (Platform.isWindows) {
-        final ocr = PlatformOcr();
-        final ocrResult = await ocr.recognizeText(OcrSource.file(File(_selectedImagePath!)));
+        // 2. Run Gemini Vision Analysis
+        final formDataAi = dio_pkg.FormData.fromMap({
+          'file': await dio_pkg.MultipartFile.fromFile(
+            _selectedImagePath!,
+            filename: _selectedImagePath!.split(Platform.pathSeparator).last,
+          ),
+        });
+        final responseAi = await dio.post(
+          'http://127.0.0.1:8000/api/analyze-image',
+          data: formDataAi,
+        );
+
+        String ocrText = '인식된 텍스트가 없습니다.';
+        String confidence = '0.0%';
+        if (responseOcr.statusCode == 200 && responseOcr.data != null) {
+          ocrText = responseOcr.data['text'] ?? '인식된 텍스트가 없습니다.';
+          confidence = responseOcr.data['confidence'] ?? '0.0%';
+        }
+
+        String aiResult = 'Gemini 분석을 가져오지 못했습니다.';
+        if (responseAi.statusCode == 200 && responseAi.data != null) {
+          aiResult = responseAi.data['analysis'] ?? '분석 결과가 없습니다.';
+        }
+
         setState(() {
-          _recognizedText = ocrResult.text.trim().isNotEmpty ? ocrResult.text : '인식된 텍스트가 없습니다.';
-          _confidence = '100% (윈도우 로컬 OCR)';
+          _serverOcrText = ocrText;
+          _serverConfidence = confidence;
+          _geminiAnalysis = aiResult;
           _hasAnalyzed = true;
         });
-        return;
+      } catch (e) {
+        setState(() {
+          _serverOcrText = '분석 진행 실패: $e\n(백엔드 서버가 켜져 있는지 확인해 주세요)';
+          _geminiAnalysis = 'Gemini 분석 실패';
+        });
+      } finally {
+        setState(() {
+          _isAnalyzing = false;
+        });
       }
-    } catch (e) {
-      setState(() {
-        _recognizedText = '윈도우 로컬 OCR 분석 실패: $e';
-      });
-    } finally {
-      setState(() {
-        _isAnalyzing = false;
-      });
+    } else {
+      // 1. Try local ML Kit OCR first (Android/iOS only)
+      try {
+        if (Platform.isAndroid || Platform.isIOS) {
+          final inputImage = InputImage.fromFilePath(_selectedImagePath!);
+          final textRecognizer = TextRecognizer(script: TextRecognitionScript.korean);
+          final RecognizedText recognizedText = await textRecognizer.processImage(inputImage);
+          
+          setState(() {
+            _localOcrText = recognizedText.text.isNotEmpty 
+                ? recognizedText.text 
+                : '인식된 텍스트가 없습니다.';
+            _localConfidence = '99.0% (온디바이스)';
+            _isAnalyzing = false;
+            _hasAnalyzed = true;
+          });
+          await textRecognizer.close();
+          return;
+        }
+      } catch (e) {
+        debugPrint("Local ML Kit OCR failed: $e");
+      }
+
+      // 2. Try Windows native local OCR (using platform_ocr)
+      try {
+        if (Platform.isWindows) {
+          final ocr = PlatformOcr();
+          final ocrResult = await ocr.recognizeText(OcrSource.file(File(_selectedImagePath!)));
+          setState(() {
+            _localOcrText = ocrResult.text.trim().isNotEmpty ? ocrResult.text : '인식된 텍스트가 없습니다.';
+            _localConfidence = '100% (윈도우 로컬 OCR)';
+            _hasAnalyzed = true;
+          });
+          return;
+        }
+      } catch (e) {
+        setState(() {
+          _localOcrText = '윈도우 로컬 OCR 분석 실패: $e';
+        });
+      } finally {
+        setState(() {
+          _isAnalyzing = false;
+        });
+      }
     }
   }
+
   Future<void> _saveAnalysis() async {
     if (!_hasAnalyzed) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('이미지가 분석되지 않았습니다. 먼저 분석 실행(AI) 버튼을 눌러주세요.')),
+      showDialog(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('경고'),
+          content: const Text('이미지가 분석되지 않았습니다. 로컬 분석 또는 AI 분석을 먼저 실행해 주세요.'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('확인'),
+            ),
+          ],
+        ),
       );
       return;
     }
+
+    final bool? confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('저장 확인'),
+        content: const Text('분석 결과를 저장하시겠습니까?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('취소'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('확인'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm != true) return;
 
     try {
       final dataDir = Directory('DATA');
@@ -762,9 +997,15 @@ class _ImageUploadScreenState extends State<ImageUploadScreen> {
         'dateTime': _photoDate,
         'latitude': _latitude,
         'longitude': _longitude,
-        'recognizedText': _recognizedText,
-        'confidence': _confidence,
+        'localOcrText': _localOcrText,
+        'localConfidence': _localConfidence,
+        'serverOcrText': _serverOcrText,
+        'serverConfidence': _serverConfidence,
+        'recognizedText': _localOcrText.isNotEmpty ? _localOcrText : _serverOcrText,
+        'confidence': _localConfidence.isNotEmpty ? _localConfidence : _serverConfidence,
         'saveTime': DateTime.now().toString().substring(0, 19),
+        'isAiAnalyzed': _geminiAnalysis.isNotEmpty,
+        'geminiAnalysis': _geminiAnalysis,
       };
 
       final File jsonFile = File('DATA/analysis_$timestamp.json');
@@ -776,8 +1017,18 @@ class _ImageUploadScreenState extends State<ImageUploadScreen> {
 
       _resetScreen();
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('저장 실패: $e')),
+      showDialog(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('에러'),
+          content: Text('저장 실패: $e'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('확인'),
+            ),
+          ],
+        ),
       );
     }
   }
@@ -786,12 +1037,15 @@ class _ImageUploadScreenState extends State<ImageUploadScreen> {
     setState(() {
       _selectedImagePath = null;
       _isAnalyzing = false;
-      _recognizedText = '';
-      _confidence = '';
+      _localOcrText = '';
+      _localConfidence = '';
+      _serverOcrText = '';
+      _serverConfidence = '';
       _photoDate = '';
       _latitude = null;
       _longitude = null;
       _hasAnalyzed = false;
+      _geminiAnalysis = '';
     });
   }
 
@@ -835,6 +1089,17 @@ class _ImageUploadScreenState extends State<ImageUploadScreen> {
         ),
       ),
     );
+  }
+
+  String _formatGeminiJson(String raw) {
+    try {
+      final trimmed = raw.trim();
+      if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+        final decoded = json.decode(trimmed);
+        return const JsonEncoder.withIndent('  ').convert(decoded);
+      }
+    } catch (_) {}
+    return raw;
   }
 
   @override
@@ -890,21 +1155,100 @@ class _ImageUploadScreenState extends State<ImageUploadScreen> {
             ),
             const SizedBox(height: 16),
             ElevatedButton.icon(
-              onPressed: _isAnalyzing ? null : _runOCR,
-              icon: _isAnalyzing 
+              onPressed: _isAnalyzing ? null : () => _runAnalysis(isServer: false),
+              icon: (_isAnalyzing && !_hasAnalyzed && !AppConfig.useBackendServer)
                   ? const SizedBox(
                       width: 20, 
                       height: 20, 
                       child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2)
                     )
-                  : const Icon(Icons.analytics_outlined),
-              label: Text(_isAnalyzing ? '분석 중...' : '분석 실행 (AI)'),
+                  : const Icon(Icons.computer),
+              label: Text(_isAnalyzing && !AppConfig.useBackendServer ? '로컬 분석 중...' : '로컬 분석'),
               style: ElevatedButton.styleFrom(
                 padding: const EdgeInsets.symmetric(vertical: 16),
                 backgroundColor: const Color(0xFF28A745),
                 foregroundColor: const Color(0xFFFFFFFF),
               ),
             ),
+            if (_localOcrText.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF8F9FA),
+                  borderRadius: BorderRadius.circular(6),
+                  border: Border.all(color: const Color(0xFFE9ECEF)),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('로컬 OCR 결과 (신뢰도: $_localConfidence)', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                    const Divider(height: 16),
+                    SelectableText(
+                      _localOcrText,
+                      style: const TextStyle(fontSize: 13, color: Color(0xFF212529)),
+                    ),
+                    if (_photoDate.isNotEmpty) ...[
+                      const Divider(height: 16),
+                      Text('촬영 일자: $_photoDate', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+                    ],
+                    _buildMap(),
+                  ],
+                ),
+              ),
+            ],
+            const SizedBox(height: 16),
+            ElevatedButton.icon(
+              onPressed: (!AppConfig.useBackendServer || _isAnalyzing)
+                  ? null
+                  : () => _runAnalysis(isServer: true),
+              icon: (_isAnalyzing && !_hasAnalyzed && AppConfig.useBackendServer)
+                  ? const SizedBox(
+                      width: 20, 
+                      height: 20, 
+                      child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2)
+                    )
+                  : const Icon(Icons.psychology),
+              label: Text(_isAnalyzing && AppConfig.useBackendServer ? 'AI 분석 중...' : 'AI 분석'),
+              style: ElevatedButton.styleFrom(
+                padding: const EdgeInsets.symmetric(vertical: 16),
+                backgroundColor: const Color(0xFF8A2BE2),
+                foregroundColor: const Color(0xFFFFFFFF),
+              ),
+            ),
+            if (_geminiAnalysis.isNotEmpty || _serverOcrText.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF8F9FA),
+                  borderRadius: BorderRadius.circular(6),
+                  border: Border.all(color: const Color(0xFFE9ECEF)),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    if (_serverOcrText.isNotEmpty) ...[
+                      Text('서버 EasyOCR 결과 (신뢰도: $_serverConfidence)', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                      const Divider(height: 16),
+                      SelectableText(
+                        _serverOcrText,
+                        style: const TextStyle(fontSize: 13, color: Color(0xFF212529)),
+                      ),
+                      const SizedBox(height: 16),
+                    ],
+                    if (_geminiAnalysis.isNotEmpty) ...[
+                      const Text('Gemini AI 분석 결과', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                      const Divider(height: 16),
+                      SelectableText(
+                        _formatGeminiJson(_geminiAnalysis),
+                        style: const TextStyle(fontSize: 13, color: Color(0xFF212529), fontFamily: 'monospace'),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ],
             if (_hasAnalyzed) ...[
               const SizedBox(height: 24),
               Container(
@@ -943,7 +1287,6 @@ class _ImageUploadScreenState extends State<ImageUploadScreen> {
                           ),
                         ),
                       ),
-                      _buildMap(),
                     ],
                   ),
                 ),

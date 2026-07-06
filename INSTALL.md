@@ -33,11 +33,59 @@
 
 ---
 
+## 🛠️ 백엔드(FastAPI) 서버 설치 및 실행 가이드
+
+본 애플리케이션은 로컬 분석 외에도 백엔드 서버를 연동하여 **EasyOCR 및 Gemini AI 분석** 기능을 수행할 수 있습니다. 백엔드 서버를 셋팅하고 구동하는 방법은 다음과 같습니다.
+
+### 1단계: 사전 요구사항
+* **Python**: 3.10 버전 이상 설치 권장 (설치 시 "Add Python to PATH" 필수 체크)
+
+### 2단계: 백엔드 개발 환경 설정
+1. 터미널(Command Prompt 또는 PowerShell)을 열고 `backend` 디렉터리로 이동합니다:
+   ```bash
+   cd backend
+   ```
+2. 파이썬 가상환경(venv)을 생성합니다:
+   ```bash
+   python -m venv .venv
+   ```
+3. 생성된 가상환경을 활성화합니다:
+   * **Windows (Cmd)**: `.venv\Scripts\activate.bat`
+   * **Windows (PowerShell)**: `.venv\Scripts\Activate.ps1`
+   * **macOS / Linux**: `source .venv/bin/activate`
+4. 종속 라이브러리 패키지를 설치합니다:
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+### 3단계: Gemini API 키 및 환경 변수 설정
+1. `backend` 디렉터리 내에 **`.env`** 파일을 생성합니다.
+2. 아래와 같이 발급받은 Gemini API 키를 입력해 저장합니다:
+   ```env
+   GEMINI_API_KEY=your_actual_gemini_api_key_here
+   ```
+
+### 4단계: 백엔드 서버 실행
+가상환경이 활성화된 상태에서 아래 명령어로 서버를 구동합니다:
+```bash
+python main.py
+```
+* 서버가 성공적으로 구동되면 `http://127.0.0.1:8000` 주소에서 클라이언트 요청을 대기합니다.
+
+### 5단계: 앱에서 백엔드 서버 활성화하기
+1. `local_ocr_app.exe` 또는 Flutter 앱을 실행합니다.
+2. 메인 화면(등록된 이미지 리스트) 우측 상단의 ⚙️ **설정(톱니바퀴) 아이콘**을 클릭합니다.
+3. **"백엔드 서버 사용"** 토글 스위치를 활성화하고 **저장** 버튼을 누릅니다.
+4. 이제 이미지 등록 화면에서 **`AI 분석`** 버튼이 활성화되어 원격 EasyOCR 및 Gemini AI 이미지 요약 기능을 사용하실 수 있습니다.
+
+---
+
 ## ⚠️ 중요 참고 사항
 
 * **완전한 오프라인/로컬 독립 실행**: 
   * 본 프로그램은 프론트엔드 내부에서 Windows OS의 내장 OCR 엔진(`Windows.Media.Ocr`)을 활용해 동작하므로, **백엔드 서버 구동이나 인터넷 연결이 없어도 정상적으로 OCR 분석이 동작**합니다.
   * 따라서 배포 시 백엔드 서버를 함께 배포하지 않고, 이 `setup.win.d` 폴더만 배포해도 안전하게 사용하실 수 있습니다.
+  * 보다 고도화된 딥러닝 OCR(EasyOCR)과 Gemini 모델의 복합 분석 결과가 필요할 때만 상단의 백엔드 가이드를 참고하여 서버를 연동해 주십시오.
 
 ---
 

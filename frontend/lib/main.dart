@@ -551,11 +551,12 @@ class ImageUploadScreen extends StatefulWidget {
 class _ImageUploadScreenState extends State<ImageUploadScreen> {
   String? _selectedImagePath;
   bool _isAnalyzing = false;
-  String _recognizedText = '인식된 결과 텍스트가 여기에 노출됩니다.';
-  String _confidence = '0.0%';
-  String _photoDate = '날짜 정보 없음';
+  String _recognizedText = '';
+  String _confidence = '';
+  String _photoDate = '';
   double? _latitude;
   double? _longitude;
+  bool _hasAnalyzed = false;
 
   String get _analysisResultJson {
     final Map<String, dynamic> data = {
@@ -659,8 +660,9 @@ class _ImageUploadScreenState extends State<ImageUploadScreen> {
           _photoDate = date ?? '날짜 정보 없음 (총 태그: ${tags.length}개)';
           _latitude = lat;
           _longitude = lon;
-          _recognizedText = '인식된 결과 텍스트가 여기에 노출됩니다.';
-          _confidence = '0.0%';
+          _recognizedText = '';
+          _confidence = '';
+          _hasAnalyzed = false;
         });
       }
     } catch (e) {
@@ -700,6 +702,7 @@ class _ImageUploadScreenState extends State<ImageUploadScreen> {
               : '인식된 텍스트가 없습니다.';
           _confidence = '99.0% (온디바이스)';
           _isAnalyzing = false;
+          _hasAnalyzed = true;
         });
         await textRecognizer.close();
         return;
@@ -716,6 +719,7 @@ class _ImageUploadScreenState extends State<ImageUploadScreen> {
         setState(() {
           _recognizedText = ocrResult.text.trim().isNotEmpty ? ocrResult.text : '인식된 텍스트가 없습니다.';
           _confidence = '100% (윈도우 로컬 OCR)';
+          _hasAnalyzed = true;
         });
         return;
       }
@@ -730,9 +734,9 @@ class _ImageUploadScreenState extends State<ImageUploadScreen> {
     }
   }
   Future<void> _saveAnalysis() async {
-    if (_selectedImagePath == null) {
+    if (!_hasAnalyzed) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('저장할 분석 내용이 없습니다. 먼저 이미지를 불러오고 분석을 실행해 주세요.')),
+        const SnackBar(content: Text('이미지가 분석되지 않았습니다. 먼저 분석 실행(AI) 버튼을 눌러주세요.')),
       );
       return;
     }
@@ -749,11 +753,12 @@ class _ImageUploadScreenState extends State<ImageUploadScreen> {
       final File originalFile = File(_selectedImagePath!);
       final extension = originalFile.path.split('.').last;
       final copiedImagePath = 'DATA/${timestamp}_image.$extension';
-      await originalFile.copy(copiedImagePath);
+      final File copiedFile = await originalFile.copy(copiedImagePath);
+      final String absoluteImagePath = copiedFile.absolute.path;
 
       // Create JSON data
       final Map<String, dynamic> data = {
-        'imagePath': copiedImagePath,
+        'imagePath': absoluteImagePath,
         'dateTime': _photoDate,
         'latitude': _latitude,
         'longitude': _longitude,
@@ -766,13 +771,28 @@ class _ImageUploadScreenState extends State<ImageUploadScreen> {
       await jsonFile.writeAsString(json.encode(data));
 
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('분석 결과가 DATA 폴더에 성공적으로 저장되었습니다.')),
+        const SnackBar(content: Text('저장 되었습니다.')),
       );
+
+      _resetScreen();
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('저장 실패: $e')),
       );
     }
+  }
+
+  void _resetScreen() {
+    setState(() {
+      _selectedImagePath = null;
+      _isAnalyzing = false;
+      _recognizedText = '';
+      _confidence = '';
+      _photoDate = '';
+      _latitude = null;
+      _longitude = null;
+      _hasAnalyzed = false;
+    });
   }
 
   Widget _buildMap() {
@@ -885,48 +905,50 @@ class _ImageUploadScreenState extends State<ImageUploadScreen> {
                 foregroundColor: const Color(0xFFFFFFFF),
               ),
             ),
-            const SizedBox(height: 24),
-            Container(
-              decoration: BoxDecoration(
-                color: const Color(0xFFFFFFFF),
-                borderRadius: BorderRadius.circular(8),
-                boxShadow: [
-                  BoxShadow(
-                    color: const Color(0xFF000000).withOpacity(0.05),
-                    blurRadius: 8,
-                    offset: const Offset(0, 4),
-                  ),
-                ],
-              ),
-              child: Padding(
-                padding: const EdgeInsets.all(16.0),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text('분석 결과 정보 (JSON)', style: theme.textTheme.titleLarge),
-                    const Divider(height: 24),
-                    Container(
-                      width: double.infinity,
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFF8F9FA),
-                        borderRadius: BorderRadius.circular(6),
-                        border: Border.all(color: const Color(0xFFE9ECEF)),
-                      ),
-                      child: SelectableText(
-                        _analysisResultJson,
-                        style: const TextStyle(
-                          fontFamily: 'monospace',
-                          fontSize: 13,
-                          color: Color(0xFF212529),
-                        ),
-                      ),
+            if (_hasAnalyzed) ...[
+              const SizedBox(height: 24),
+              Container(
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFFFFFF),
+                  borderRadius: BorderRadius.circular(8),
+                  boxShadow: [
+                    BoxShadow(
+                      color: const Color(0xFF000000).withOpacity(0.05),
+                      blurRadius: 8,
+                      offset: const Offset(0, 4),
                     ),
-                    _buildMap(),
                   ],
                 ),
+                child: Padding(
+                  padding: const EdgeInsets.all(16.0),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('분석 결과 정보 (JSON)', style: theme.textTheme.titleLarge),
+                      const Divider(height: 24),
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFF8F9FA),
+                          borderRadius: BorderRadius.circular(6),
+                          border: Border.all(color: const Color(0xFFE9ECEF)),
+                        ),
+                        child: SelectableText(
+                          _analysisResultJson,
+                          style: const TextStyle(
+                            fontFamily: 'monospace',
+                            fontSize: 13,
+                            color: Color(0xFF212529),
+                          ),
+                        ),
+                      ),
+                      _buildMap(),
+                    ],
+                  ),
+                ),
               ),
-            ),
+            ],
             const SizedBox(height: 24),
             OutlinedButton.icon(
               onPressed: _saveAnalysis,

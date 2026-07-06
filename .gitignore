@@ -1,0 +1,25 @@
+# Flutter build outputs and package files
+frontend/build/
+frontend/.dart_tool/
+frontend/.flutter-plugins
+frontend/.flutter-plugins-dependencies
+frontend/.pub-cache/
+frontend/.pub/
+frontend/pubspec.lock
+
+# Python virtual environment and caches
+backend/.venv/
+backend/__pycache__/
+backend/ocr_venv/
+backend/.pytest_cache/
+
+# Executables & Local Release Packages
+setup.win.d/
+
+# OS-generated files
+.DS_Store
+Thumbs.db
+
+# Certificates
+*.cer
+*.pfx

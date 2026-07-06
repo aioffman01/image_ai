@@ -195,8 +195,233 @@ class _MainResponsiveLayoutState extends State<MainResponsiveLayout> {
 }
 
 // 1. Image List Screen
-class ImageListScreen extends StatelessWidget {
+class ImageListScreen extends StatefulWidget {
   const ImageListScreen({super.key});
+
+  @override
+  State<ImageListScreen> createState() => _ImageListScreenState();
+}
+
+class _ImageListScreenState extends State<ImageListScreen> {
+  List<Map<String, dynamic>> _savedAnalyses = [];
+  bool _isLoading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadSavedAnalyses();
+  }
+
+  Future<void> _loadSavedAnalyses() async {
+    setState(() {
+      _isLoading = true;
+    });
+
+    try {
+      final dataDir = Directory('DATA');
+      if (await dataDir.exists()) {
+        final List<Map<String, dynamic>> loadedList = [];
+        final List<FileSystemEntity> entities = dataDir.listSync();
+        for (final entity in entities) {
+          if (entity is File && entity.path.endsWith('.json')) {
+            try {
+              final content = await entity.readAsString();
+              final Map<String, dynamic> data = json.decode(content);
+              data['filePath'] = entity.path;
+              loadedList.add(data);
+            } catch (e) {
+              debugPrint("Error parsing ${entity.path}: $e");
+            }
+          }
+        }
+        
+        loadedList.sort((a, b) => (b['saveTime'] ?? '').compareTo(a['saveTime'] ?? ''));
+
+        setState(() {
+          _savedAnalyses = loadedList;
+        });
+      } else {
+        setState(() {
+          _savedAnalyses = [];
+        });
+      }
+    } catch (e) {
+      debugPrint("Error loading saved analyses: $e");
+    } finally {
+      setState(() {
+        _isLoading = false;
+      });
+    }
+  }
+
+  Future<void> _deleteAnalysis(Map<String, dynamic> item) async {
+    final bool? confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('분석 내용 삭제'),
+        content: const Text('이 분석 기록을 영구히 삭제하시겠습니까?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('취소'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white),
+            child: const Text('삭제'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm == true) {
+      try {
+        final jsonFile = File(item['filePath']);
+        if (await jsonFile.exists()) {
+          await jsonFile.delete();
+        }
+        final imagePath = item['imagePath'];
+        if (imagePath != null) {
+          final imgFile = File(imagePath);
+          if (await imgFile.exists()) {
+            await imgFile.delete();
+          }
+        }
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('삭제되었습니다.')),
+        );
+        _loadSavedAnalyses();
+      } catch (e) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('삭제 실패: $e')),
+        );
+      }
+    }
+  }
+
+  void _showDetails(Map<String, dynamic> item) {
+    showDialog(
+      context: context,
+      builder: (context) {
+        final double? lat = item['latitude'] != null ? (item['latitude'] as num).toDouble() : null;
+        final double? lon = item['longitude'] != null ? (item['longitude'] as num).toDouble() : null;
+        
+        final Map<String, dynamic> dataJson = {
+          'metadata': {
+            'dateTime': item['dateTime'] ?? '날짜 정보 없음',
+            'gps': lat != null && lon != null
+                ? {
+                    'latitude': double.parse(lat.toStringAsFixed(6)),
+                    'longitude': double.parse(lon.toStringAsFixed(6)),
+                  }
+                : null,
+          },
+          'ocr': {
+            'confidence': item['confidence'] ?? '0.0%',
+            'text': item['recognizedText'] ?? '',
+          }
+        };
+        final String formattedJson = const JsonEncoder.withIndent('  ').convert(dataJson);
+
+        return Dialog(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 600, maxHeight: 700),
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.all(24.0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text('상세 분석 정보', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+                      IconButton(
+                        icon: const Icon(Icons.close),
+                        onPressed: () => Navigator.of(context).pop(),
+                      ),
+                    ],
+                  ),
+                  const Divider(height: 24),
+                  if (item['imagePath'] != null && File(item['imagePath']).existsSync())
+                    Container(
+                      height: 200,
+                      width: double.infinity,
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: Colors.grey[300]!),
+                      ),
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(8),
+                        child: Image.file(File(item['imagePath']), fit: BoxFit.contain),
+                      ),
+                    ),
+                  const SizedBox(height: 16),
+                  const Text('결과 데이터 (JSON):', style: TextStyle(fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 8),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF8F9FA),
+                      borderRadius: BorderRadius.circular(6),
+                      border: Border.all(color: const Color(0xFFE9ECEF)),
+                    ),
+                    child: SelectableText(
+                      formattedJson,
+                      style: const TextStyle(
+                        fontFamily: 'monospace',
+                        fontSize: 13,
+                        color: Color(0xFF212529),
+                      ),
+                    ),
+                  ),
+                  if (lat != null && lon != null) ...[
+                    const SizedBox(height: 16),
+                    Container(
+                      height: 200,
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: Colors.grey[300]!),
+                      ),
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(8),
+                        child: FlutterMap(
+                          options: MapOptions(
+                            initialCenter: LatLng(lat, lon),
+                            initialZoom: 13.0,
+                          ),
+                          children: [
+                            TileLayer(
+                              urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                              userAgentPackageName: 'com.example.local_ocr_app',
+                            ),
+                            MarkerLayer(
+                              markers: [
+                                Marker(
+                                  point: LatLng(lat, lon),
+                                  width: 40,
+                                  height: 40,
+                                  child: const Icon(
+                                    Icons.location_on,
+                                    color: Colors.red,
+                                    size: 40,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -206,74 +431,110 @@ class ImageListScreen extends StatelessWidget {
         title: Text('등록된 이미지 리스트', style: theme.textTheme.titleLarge),
         backgroundColor: Colors.transparent,
         elevation: 0,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.refresh),
+            onPressed: _loadSavedAnalyses,
+            tooltip: '목록 새로고침',
+          ),
+        ],
       ),
-      body: Padding(
-        padding: const EdgeInsets.all(16.0), // Spacing Medium (16pt)
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const SizedBox(height: 8), // Spacing Small (8pt)
-            Expanded(
-              child: GridView.builder(
-                gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-                  maxCrossAxisExtent: 250,
-                  childAspectRatio: 0.8,
-                  crossAxisSpacing: 16,
-                  mainAxisSpacing: 16,
-                ),
-                itemCount: 6,
-                itemBuilder: (context, index) {
-                  return Container(
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFFFFFFF),
-                      borderRadius: BorderRadius.circular(8),
-                      boxShadow: [
-                        BoxShadow(
-                          color: const Color(0xFF000000).withOpacity(0.05),
-                          blurRadius: 8,
-                          offset: const Offset(0, 4),
-                        ),
-                      ],
+      body: _isLoading
+          ? const Center(child: CircularProgressIndicator())
+          : _savedAnalyses.isEmpty
+              ? const Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(Icons.image_not_supported_outlined, size: 64, color: Colors.grey),
+                      SizedBox(height: 16),
+                      Text('저장된 분석 기록이 없습니다.', style: TextStyle(color: Colors.grey)),
+                      SizedBox(height: 8),
+                      Text('이미지 등록 화면에서 분석 후 저장해 보세요.', style: TextStyle(color: Colors.grey, fontSize: 12)),
+                    ],
+                  ),
+                )
+              : Padding(
+                  padding: const EdgeInsets.all(16.0),
+                  child: GridView.builder(
+                    gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+                      maxCrossAxisExtent: 250,
+                      childAspectRatio: 0.8,
+                      crossAxisSpacing: 16,
+                      mainAxisSpacing: 16,
                     ),
-                    clipBehavior: Clip.antiAlias,
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Expanded(
-                          child: Container(
-                            color: Colors.grey[200],
-                            width: double.infinity,
-                            child: const Icon(Icons.image, size: 50, color: Colors.grey),
-                          ),
-                        ),
-                        Padding(
-                          padding: const EdgeInsets.all(8.0),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
+                    itemCount: _savedAnalyses.length,
+                    itemBuilder: (context, index) {
+                      final item = _savedAnalyses[index];
+                      final hasLocalImage = item['imagePath'] != null && File(item['imagePath']).existsSync();
+                      return Card(
+                        clipBehavior: Clip.antiAlias,
+                        elevation: 2,
+                        child: InkWell(
+                          onTap: () => _showDetails(item),
+                          child: Stack(
                             children: [
-                              Text(
-                                '이미지 제목 $index',
-                                style: theme.textTheme.bodyLarge?.copyWith(fontWeight: FontWeight.bold),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
+                              Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Expanded(
+                                    child: Container(
+                                      color: Colors.grey[100],
+                                      width: double.infinity,
+                                      child: hasLocalImage
+                                          ? Image.file(
+                                              File(item['imagePath']),
+                                              fit: BoxFit.cover,
+                                              width: double.infinity,
+                                            )
+                                          : const Icon(Icons.image, size: 50, color: Colors.grey),
+                                    ),
+                                  ),
+                                  Padding(
+                                    padding: const EdgeInsets.all(8.0),
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          item['dateTime'] != '날짜 정보 없음'
+                                              ? (item['dateTime'] ?? '분석 기록')
+                                              : '날짜 정보 없음',
+                                          style: theme.textTheme.bodyLarge?.copyWith(fontWeight: FontWeight.bold),
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                        const SizedBox(height: 4),
+                                        Text(
+                                          '저장: ${item['saveTime'] ?? ''}',
+                                          style: theme.textTheme.bodySmall,
+                                        ),
+                                      ],
+                                    ),
+                                  )
+                                ],
                               ),
-                              const SizedBox(height: 4),
-                              Text(
-                                '등록일: 2026-07-06',
-                                style: theme.textTheme.bodySmall,
+                              Positioned(
+                                top: 4,
+                                right: 4,
+                                child: Container(
+                                  decoration: const BoxDecoration(
+                                    color: Colors.white70,
+                                    shape: BoxShape.circle,
+                                  ),
+                                  child: IconButton(
+                                    icon: const Icon(Icons.delete, color: Colors.redAccent, size: 20),
+                                    onPressed: () => _deleteAnalysis(item),
+                                    tooltip: '삭제',
+                                  ),
+                                ),
                               ),
                             ],
                           ),
-                        )
-                      ],
-                    ),
-                  );
-                },
-              ),
-            ),
-          ],
-        ),
-      ),
+                        ),
+                      );
+                    },
+                  ),
+                ),
     );
   }
 }
@@ -468,6 +729,51 @@ class _ImageUploadScreenState extends State<ImageUploadScreen> {
       });
     }
   }
+  Future<void> _saveAnalysis() async {
+    if (_selectedImagePath == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('저장할 분석 내용이 없습니다. 먼저 이미지를 불러오고 분석을 실행해 주세요.')),
+      );
+      return;
+    }
+
+    try {
+      final dataDir = Directory('DATA');
+      if (!await dataDir.exists()) {
+        await dataDir.create(recursive: true);
+      }
+
+      final timestamp = DateTime.now().millisecondsSinceEpoch;
+      
+      // Copy selected image to DATA folder
+      final File originalFile = File(_selectedImagePath!);
+      final extension = originalFile.path.split('.').last;
+      final copiedImagePath = 'DATA/${timestamp}_image.$extension';
+      await originalFile.copy(copiedImagePath);
+
+      // Create JSON data
+      final Map<String, dynamic> data = {
+        'imagePath': copiedImagePath,
+        'dateTime': _photoDate,
+        'latitude': _latitude,
+        'longitude': _longitude,
+        'recognizedText': _recognizedText,
+        'confidence': _confidence,
+        'saveTime': DateTime.now().toString().substring(0, 19),
+      };
+
+      final File jsonFile = File('DATA/analysis_$timestamp.json');
+      await jsonFile.writeAsString(json.encode(data));
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('분석 결과가 DATA 폴더에 성공적으로 저장되었습니다.')),
+      );
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('저장 실패: $e')),
+      );
+    }
+  }
 
   Widget _buildMap() {
     if (_latitude == null || _longitude == null) return const SizedBox.shrink();
@@ -623,7 +929,7 @@ class _ImageUploadScreenState extends State<ImageUploadScreen> {
             ),
             const SizedBox(height: 24),
             OutlinedButton.icon(
-              onPressed: () {},
+              onPressed: _saveAnalysis,
               icon: const Icon(Icons.save_alt),
               label: const Text('분석 내용 저장'),
               style: OutlinedButton.styleFrom(
